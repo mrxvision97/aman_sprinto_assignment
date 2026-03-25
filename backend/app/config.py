@@ -1,5 +1,19 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+
+def _ensure_asyncpg_database_url(url: str) -> str:
+    """Railway/Heroku-style URLs use postgresql://; SQLAlchemy async needs postgresql+asyncpg://."""
+    if not url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if "+" in scheme:
+        return url
+    s = scheme.lower()
+    if s in ("postgresql", "postgres"):
+        return f"postgresql+asyncpg://{rest}"
+    return url
 
 
 class Settings(BaseSettings):
@@ -15,6 +29,11 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, v: object) -> object:
+        return _ensure_asyncpg_database_url(v) if isinstance(v, str) else v
 
 
 @lru_cache(maxsize=None)
