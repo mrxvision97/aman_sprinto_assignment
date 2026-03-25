@@ -1,13 +1,28 @@
 from contextlib import asynccontextmanager
+import logging
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import init_db
 
 
+logger = logging.getLogger(__name__)
+
+
+async def _initialize_database(app: FastAPI):
+    try:
+        await init_db()
+        app.state.db_ready = True
+    except Exception:
+        # Keep the API process alive so platform health checks can pass and retries can happen.
+        logger.exception("Database initialization failed during startup")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    app.state.db_ready = False
+    app.state.db_init_task = asyncio.create_task(_initialize_database(app))
     yield
 
 
@@ -40,7 +55,11 @@ app.include_router(resumes.router)
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "sprinto-resume-screener"}
+    return {
+        "status": "ok",
+        "service": "sprinto-resume-screener",
+        "db_ready": bool(getattr(app.state, "db_ready", False)),
+    }
 
 
 @app.post("/api/seed")
