@@ -1,7 +1,7 @@
 import ssl as _ssl
 import socket
 import logging
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
@@ -103,6 +103,14 @@ def _is_pooler_connection(database_url: str) -> bool:
     return "pooler.supabase.com" in host or port == 6543
 
 
+def _disable_sqlalchemy_stmt_cache(database_url: str) -> str:
+    """Append prepared_statement_cache_size=0 to the URL for SQLAlchemy's asyncpg dialect."""
+    if "prepared_statement_cache_size" in database_url:
+        return database_url
+    separator = "&" if "?" in database_url else "?"
+    return database_url + separator + "prepared_statement_cache_size=0"
+
+
 def _make_ssl_context() -> _ssl.SSLContext:
     """Create an SSL context that encrypts traffic but does not verify certificates.
 
@@ -141,8 +149,12 @@ def _asyncpg_connect_args(database_url: str, ssl_mode: str) -> dict:
     return args
 
 
+_db_url = settings.database_url
+if _is_pooler_connection(_db_url):
+    _db_url = _disable_sqlalchemy_stmt_cache(_db_url)
+
 engine = create_async_engine(
-    settings.database_url,
+    _db_url,
     echo=False,
     connect_args=_asyncpg_connect_args(settings.database_url, settings.database_ssl),
     pool_pre_ping=True,
