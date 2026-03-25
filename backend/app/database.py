@@ -1,3 +1,4 @@
+import ssl as _ssl
 import socket
 import logging
 from urllib.parse import urlparse
@@ -71,27 +72,73 @@ def _maybe_patch_ipv4_first_dns(database_url: str, enabled: bool) -> None:
 _maybe_patch_ipv4_first_dns(settings.database_url, settings.database_ipv4_first)
 
 
-def _asyncpg_connect_args(database_url: str, ssl_mode: str) -> dict:
-    """Local Postgres usually has no SSL; managed providers need TLS."""
-    mode = (ssl_mode or "auto").strip().lower()
-    if mode in ("0", "false", "disable", "off"):
-        return {}
-    if mode in ("1", "true", "require", "on"):
-        # asyncpg + managed Postgres (Supabase/Railway) are most reliable with boolean SSL
-        return {"ssl": True}
+def _parse_db_host(database_url: str) -> str:
     raw = database_url
     for prefix in ("postgresql+asyncpg://", "postgres+asyncpg://"):
         if raw.startswith(prefix):
             raw = "postgresql://" + raw.split("://", 1)[1]
             break
     try:
-        host = (urlparse(raw).hostname or "").lower()
+        return (urlparse(raw).hostname or "").lower()
     except Exception:
-        host = ""
-    # Typical local/dev Postgres (bare metal, Docker Compose service names).
-    if host in ("localhost", "127.0.0.1", "::1", "postgres", "db") or host.endswith(".local"):
-        return {}
-    return {"ssl": True}
+        return ""
+
+
+def _parse_db_port(database_url: str) -> int:
+    raw = database_url
+    for prefix in ("postgresql+asyncpg://", "postgres+asyncpg://"):
+        if raw.startswith(prefix):
+            raw = "postgresql://" + raw.split("://", 1)[1]
+            break
+    try:
+        return urlparse(raw).port or 5432
+    except Exception:
+        return 5432
+
+
+def _is_pooler_connection(database_url: str) -> bool:
+    """Detect Supabase connection pooler (Supavisor) by host/port."""
+    host = _parse_db_host(database_url)
+    port = _parse_db_port(database_url)
+    return "pooler.supabase.com" in host or port == 6543
+
+
+def _make_ssl_context() -> _ssl.SSLContext:
+    """Create an SSL context that encrypts traffic but does not verify certificates.
+
+    Supabase pooler (Supavisor) and many managed Postgres providers use certificates
+    that Python's default trust store doesn't recognise, causing CERTIFICATE_VERIFY_FAILED.
+    """
+    ctx = _ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl.CERT_NONE
+    return ctx
+
+
+def _asyncpg_connect_args(database_url: str, ssl_mode: str) -> dict:
+    """Local Postgres usually has no SSL; managed providers need TLS."""
+    args: dict = {}
+    host = _parse_db_host(database_url)
+
+    # SSL handling — use a permissive context to avoid CERTIFICATE_VERIFY_FAILED
+    mode = (ssl_mode or "auto").strip().lower()
+    need_ssl = False
+    if mode in ("0", "false", "disable", "off"):
+        pass
+    elif mode in ("1", "true", "require", "on"):
+        need_ssl = True
+    elif host not in ("localhost", "127.0.0.1", "::1", "postgres", "db") and not host.endswith(".local"):
+        need_ssl = True
+
+    if need_ssl:
+        args["ssl"] = _make_ssl_context()
+
+    # Pooler connections (PgBouncer/Supavisor) do not support prepared statements
+    if _is_pooler_connection(database_url):
+        args["prepared_statement_cache_size"] = 0
+        logger.info("Pooler connection detected — disabled prepared statement cache")
+
+    return args
 
 
 engine = create_async_engine(
@@ -123,7 +170,7 @@ async def get_db():
         raise HTTPException(status_code=503, detail="Database is temporarily unavailable. Please retry shortly.")
 
 
-async def init_db(retries: int = 5, delay: float = 3.0):
+async def init_db(retries: int = 10, delay: float = 5.0):
     import asyncio
     for attempt in range(1, retries + 1):
         try:
