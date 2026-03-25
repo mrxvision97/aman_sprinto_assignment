@@ -6,6 +6,7 @@ Fallback: pdfplumber (PDF) / python-docx (DOCX).
 import re
 import io
 import asyncio
+import mimetypes
 from typing import Optional
 import pdfplumber
 from docx import Document
@@ -56,31 +57,66 @@ async def parse_resume(file_bytes: bytes, filename: str) -> dict:
 async def _parse_with_unstructured(file_bytes: bytes, filename: str) -> dict:
     """Call Unstructured.io Serverless API."""
     try:
-        from unstructured_client import UnstructuredClient
-        from unstructured_client.models import shared as unshared
+        import unstructured_client
+        from unstructured_client.models import operations, shared
+        from unstructured_client.utils import RetryConfig, BackoffStrategy
         from app.config import get_settings
 
         api_key = get_settings().unstructured_api_key
         if not api_key:
             return {"parsed_text": None, "parse_report": {"confidence": 0, "method": "unstructured_api", "sections_found": [], "warnings": ["No Unstructured API key"], "char_count": 0}}
 
-        client = UnstructuredClient(
+        client = unstructured_client.UnstructuredClient(
             api_key_auth=api_key,
             server_url="https://api.unstructuredapp.io",
+            retry_config=RetryConfig(
+                strategy="backoff",
+                retry_connection_errors=True,
+                backoff=BackoffStrategy(
+                    initial_interval=500,
+                    max_interval=60000,
+                    exponent=1.5,
+                    max_elapsed_time=900000,  # 15 minutes
+                ),
+            ),
         )
 
-        def _call():
-            files = unshared.Files(content=file_bytes, file_name=filename)
-            req = unshared.PartitionParameters(
-                files=files,
-                strategy="auto",
-                languages=["eng"],
-                coordinates=False,
-            )
-            resp = client.general.partition(request=req)
-            return resp.elements
+        ext = filename.lower().split(".")[-1]
+        is_pdf = ext == "pdf"
+        is_image = ext in ("png", "jpg", "jpeg", "tiff", "bmp", "heic")
 
-        elements = await asyncio.to_thread(_call)
+        # Use stronger layout-aware parsing for PDFs/images.
+        strategy = "hi_res" if (is_pdf or is_image) else "auto"
+
+        # MIME hint can help Unstructured with edge cases.
+        content_type, _ = mimetypes.guess_type(filename)
+        content_type = content_type or None
+
+        def _call():
+            files = shared.Files(content=file_bytes, file_name=filename)
+            params = shared.PartitionParameters(
+                files=files,
+                strategy=strategy,
+                languages=["eng"],
+                include_page_breaks=True,
+                unique_element_ids=True,
+                coordinates=False,
+                content_type=content_type,
+            )
+
+            # Enable more robust handling for PDFs (parallel page splitting + table extraction).
+            if is_pdf:
+                params.split_pdf_page = True
+                params.split_pdf_allow_failed = True
+                params.split_pdf_concurrency_level = 10
+                # Enable table extraction for PDFs by default (skip list empty).
+                params.skip_infer_table_types = []
+
+            req = operations.PartitionRequest(partition_parameters=params)
+            resp = client.general.partition(request=req)
+            return resp.elements, strategy, content_type
+
+        elements, strategy_used, content_type_used = await asyncio.to_thread(_call)
 
         lines = []
         for el in (elements or []):
@@ -102,6 +138,8 @@ async def _parse_with_unstructured(file_bytes: bytes, filename: str) -> dict:
             "parse_report": {
                 "confidence": min(100, 70 + len(sections) * 5),
                 "method": "unstructured_api",
+                "strategy": strategy_used,
+                "content_type": content_type_used,
                 "sections_found": sections,
                 "warnings": [] if char_count >= 100 else ["Unstructured returned very little text"],
                 "char_count": char_count,

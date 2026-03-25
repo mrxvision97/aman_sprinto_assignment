@@ -24,19 +24,20 @@ async def get_relevant_chunks(
             query_embedding = await embed_text(f"Evidence of: {requirement}")
             embedding_str = f"[{','.join(str(x) for x in query_embedding)}]"
 
-            result = await db.execute(
-                text("""
-                    SELECT chunk_text, section_type,
-                           1 - (embedding <=> :embedding::vector) AS similarity
-                    FROM resume_chunks
-                    WHERE role_id = :role_id
-                      AND embedding IS NOT NULL
-                    ORDER BY embedding <=> :embedding::vector
-                    LIMIT :top_k
-                """),
-                {"embedding": embedding_str, "role_id": role_id, "top_k": top_k},
-            )
-            rows = result.fetchall()
+            async with db.begin_nested():
+                result = await db.execute(
+                    text(f"""
+                        SELECT chunk_text, section_type,
+                               1 - (embedding <=> '{embedding_str}'::vector) AS similarity
+                        FROM resume_chunks
+                        WHERE role_id = :role_id
+                          AND embedding IS NOT NULL
+                        ORDER BY embedding <=> '{embedding_str}'::vector
+                        LIMIT :top_k
+                    """),
+                    {"role_id": role_id, "top_k": top_k},
+                )
+                rows = result.fetchall()
             if rows:
                 best = rows[0]
                 if best.similarity > 0.5:  # Only include if reasonably relevant

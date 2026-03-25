@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.resume import Resume
@@ -17,6 +17,18 @@ from uuid import UUID
 router = APIRouter(prefix="/api", tags=["resumes"])
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+# Common Unstructured-supported extensions (subset; safe for resume intake).
+ALLOWED_EXTENSIONS = {
+    # Core resume formats
+    "pdf", "docx", "doc", "rtf", "txt",
+    # Web/markup
+    "md", "html", "htm", "xml",
+    # Images (image-only resumes)
+    "png", "jpg", "jpeg", "tiff", "bmp", "heic",
+    # Email formats sometimes used by recruiters
+    "eml", "msg",
+}
 
 
 @router.post("/roles/{role_id}/resumes", response_model=UploadResponse)
@@ -35,8 +47,11 @@ async def upload_resume(
     # Validate file type
     filename = file.filename or "resume"
     ext = filename.lower().split(".")[-1]
-    if ext not in ("pdf", "docx", "doc"):
-        raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported")
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: .{ext}. Supported: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+        )
 
     # Read file
     file_bytes = await file.read()
@@ -140,6 +155,144 @@ async def multi_role_score(resume_id: UUID, data: MultiRoleRequest, db: AsyncSes
     from app.services.multi_role import score_against_roles
     results = await score_against_roles(resume, [str(rid) for rid in data.role_ids], db)
     return results
+
+
+@router.get("/roles/{role_id}/search")
+async def search_resumes(
+    role_id: UUID,
+    q: str,
+    limit: int = 8,
+    db: AsyncSession = Depends(get_db),
+):
+    """Semantic search across all resumes in a role using pgvector similarity."""
+    from app.services.gemini import embed_text
+
+    # Validate role exists
+    role_result = await db.execute(select(Role).where(Role.id == role_id))
+    if not role_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    try:
+        query_vec = await embed_text(q)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
+
+    embedding_str = f"[{','.join(str(x) for x in query_vec)}]"
+
+    # Find best matching chunk per resume, ordered by similarity
+    result = await db.execute(
+        text(f"""
+            SELECT resume_id,
+                   MIN(embedding <=> '{embedding_str}'::vector) AS best_distance
+            FROM resume_chunks
+            WHERE role_id = :role_id
+              AND embedding IS NOT NULL
+            GROUP BY resume_id
+            ORDER BY best_distance
+            LIMIT :limit
+        """),
+        {"role_id": str(role_id), "limit": limit},
+    )
+    rows = result.fetchall()
+    if not rows:
+        return []
+
+    # Load resumes with scores in the same ranked order
+    resume_ids = [str(r.resume_id) for r in rows]
+    distance_map = {str(r.resume_id): r.best_distance for r in rows}
+
+    from sqlalchemy.orm import selectinload
+    resumes_result = await db.execute(
+        select(Resume)
+        .options(selectinload(Resume.score))
+        .where(Resume.id.in_(resume_ids))
+    )
+    resumes_by_id = {str(r.id): r for r in resumes_result.scalars().all()}
+
+    output = []
+    for rid in resume_ids:
+        resume = resumes_by_id.get(rid)
+        if not resume or resume.status != "scored":
+            continue
+        d = _resume_to_dict(resume)
+        d["similarity"] = round(1 - distance_map[rid], 3)
+        output.append(d)
+    return output
+
+
+@router.get("/resumes/{resume_id}/similar")
+async def find_similar_resumes(
+    resume_id: UUID,
+    limit: int = 3,
+    db: AsyncSession = Depends(get_db),
+):
+    """Find resumes with similar content using pgvector, within the same role."""
+    from app.models.score import ResumeChunk
+    from sqlalchemy.orm import selectinload
+
+    resume_result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume = resume_result.scalar_one_or_none()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    # Get this resume's chunk embeddings
+    chunks_result = await db.execute(
+        select(ResumeChunk).where(
+            ResumeChunk.resume_id == resume_id,
+            ResumeChunk.embedding.is_not(None),
+        )
+    )
+    chunks = chunks_result.scalars().all()
+    if not chunks:
+        return []
+
+    # Average all chunk embeddings to get a single resume vector
+    import numpy as np
+    vecs = [c.embedding for c in chunks]
+    avg_vec = np.mean(vecs, axis=0).tolist()
+    embedding_str = f"[{','.join(str(x) for x in avg_vec)}]"
+
+    result = await db.execute(
+        text(f"""
+            SELECT resume_id,
+                   MIN(embedding <=> '{embedding_str}'::vector) AS best_distance
+            FROM resume_chunks
+            WHERE role_id = :role_id
+              AND resume_id != :exclude_id
+              AND embedding IS NOT NULL
+            GROUP BY resume_id
+            ORDER BY best_distance
+            LIMIT :limit
+        """),
+        {
+            "role_id": str(resume.role_id),
+            "exclude_id": str(resume_id),
+            "limit": limit,
+        },
+    )
+    rows = result.fetchall()
+    if not rows:
+        return []
+
+    resume_ids = [str(r.resume_id) for r in rows]
+    distance_map = {str(r.resume_id): r.best_distance for r in rows}
+
+    resumes_result = await db.execute(
+        select(Resume)
+        .options(selectinload(Resume.score))
+        .where(Resume.id.in_(resume_ids))
+    )
+    resumes_by_id = {str(r.id): r for r in resumes_result.scalars().all()}
+
+    output = []
+    for rid in resume_ids:
+        r = resumes_by_id.get(rid)
+        if not r or r.status != "scored":
+            continue
+        d = _resume_to_dict(r)
+        d["similarity"] = round(1 - distance_map[rid], 3)
+        output.append(d)
+    return output
 
 
 def _resume_to_dict(resume: Resume) -> dict:

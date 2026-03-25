@@ -19,16 +19,33 @@ export function UploadZone({ roleId, onUploadComplete }: UploadZoneProps) {
     async (files: FileList | File[]) => {
       const validFiles = Array.from(files).filter((f) => {
         const ext = f.name.toLowerCase();
-        return ext.endsWith(".pdf") || ext.endsWith(".docx") || ext.endsWith(".doc");
+        return (
+          ext.endsWith(".pdf") ||
+          ext.endsWith(".docx") ||
+          ext.endsWith(".doc") ||
+          ext.endsWith(".rtf") ||
+          ext.endsWith(".txt") ||
+          ext.endsWith(".md") ||
+          ext.endsWith(".html") ||
+          ext.endsWith(".htm") ||
+          ext.endsWith(".png") ||
+          ext.endsWith(".jpg") ||
+          ext.endsWith(".jpeg") ||
+          ext.endsWith(".tiff") ||
+          ext.endsWith(".bmp") ||
+          ext.endsWith(".heic") ||
+          ext.endsWith(".eml") ||
+          ext.endsWith(".msg")
+        );
       });
 
       if (validFiles.length === 0) {
-        toast.error("Please upload PDF, DOCX, or DOC files only");
+        toast.error("Unsupported file type. Upload PDF, Word, text, images, or email files.");
         return;
       }
 
       if (validFiles.length !== Array.from(files).length) {
-        toast.warning("Some files were skipped (only PDF, DOCX, and DOC supported)");
+        toast.warning("Some files were skipped (unsupported file types)");
       }
 
       setUploading(true);
@@ -83,7 +100,7 @@ export function UploadZone({ roleId, onUploadComplete }: UploadZoneProps) {
         onClick={() => {
           const input = document.createElement("input");
           input.type = "file";
-          input.accept = ".pdf,.docx,.doc";
+          input.accept = ".pdf,.docx,.doc,.rtf,.txt,.md,.html,.htm,.png,.jpg,.jpeg,.tiff,.bmp,.heic,.eml,.msg";
           input.multiple = true;
           input.onchange = (e) => {
             const files = (e.target as HTMLInputElement).files;
@@ -100,7 +117,9 @@ export function UploadZone({ roleId, onUploadComplete }: UploadZoneProps) {
         <p className="text-sm font-medium">
           {uploading ? "Uploading..." : "Drop resumes here or click to browse"}
         </p>
-        <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, and DOC files supported</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          PDF, Word, text/markdown, HTML, images, and email files supported
+        </p>
       </div>
 
       {uploadResults.length > 0 && (

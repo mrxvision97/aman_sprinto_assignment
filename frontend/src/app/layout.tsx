@@ -9,6 +9,9 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Sprinto AI Resume Screener",
   description: "AI-powered resume screening and ranking against job descriptions",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({

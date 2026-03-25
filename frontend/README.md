@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sprinto AI Resume Screener — Frontend
+
+The Next.js 14 frontend for the Sprinto AI Resume Screener. Provides a fully responsive UI for managing hiring roles, uploading and reviewing resumes, viewing AI-generated scores, and searching candidates semantically.
+
+For the full project overview, architecture, and backend setup, see the [root README](../README.md).
+
+---
+
+## Tech Stack
+
+| | |
+|---|---|
+| Framework | Next.js 14 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS |
+| Components | shadcn/ui |
+| Data Fetching | SWR with custom polling hook |
+| Icons | Lucide React |
+| Notifications | Sonner |
+
+---
+
+## Key Pages & Components
+
+| Route | Description |
+|---|---|
+| `/` | Home — role list with resume counts, average scores; create new role with optional JD preview |
+| `/roles/[id]` | Role detail — drag-and-drop upload zone, live processing status, ranked candidate list, semantic search |
+| `/roles/[id]/settings` | Role settings — JD editor + quality analysis, blind mode toggle, extraction field config, batch re-parse, delete role |
+| `/roles/[id]/candidates/[cid]` | Candidate detail — full score breakdown, dimensional scores, strengths/concerns, suggested interview questions, parsed resume text |
+
+### Notable Components
+
+- **UploadZone** — Drag-and-drop or click-to-upload. Accepts all supported resume formats (PDF, DOCX, images, etc.). Shows per-file upload status.
+- **ScoreCard** — Candidate summary card with overall score bar, recommendation badge, confidence indicator, similar-candidate finder, and delete action.
+- **JDQualityNotice** — Displays flagged JD quality issues (vague requirements, missing must-haves, bias signals) returned by the analyzer.
+- **StatusBadge** — Color-coded badge tracking resume pipeline state (`pending`, `parsing`, `extracting`, `scoring`, `scored`, `error`, `duplicate`).
+- **use-polling** — SWR-based hook that polls an endpoint on a configurable interval and stops automatically when the component unmounts.
+
+---
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
+
+# Point at your backend
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
+
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+App runs at `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment Variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend base URL |
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## Available Scripts
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Script | Description |
+|---|---|
+| `npm run dev` | Start development server with hot reload |
+| `npm run build` | Production build |
+| `npm run start` | Start production server |
+| `npm run lint` | Run ESLint |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Deploy to Vercel in one step:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Import this directory (`frontend/`) into a Vercel project.
+2. Set `NEXT_PUBLIC_API_URL` to your deployed backend URL.
+3. Deploy — Vercel auto-detects Next.js and sets the build command.

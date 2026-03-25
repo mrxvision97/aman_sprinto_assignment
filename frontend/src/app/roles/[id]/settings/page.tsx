@@ -180,6 +180,20 @@ export default function RoleSettingsPage() {
           </CardContent>
         </Card>
 
+        {/* Blind Mode */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Blind Mode</CardTitle>
+            <CardDescription>Hide candidate name, email, and phone from the AI during scoring to reduce bias</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-3">
+              <Switch checked={role.blind_mode} onCheckedChange={toggleBlindMode} id="blind" />
+              <Label htmlFor="blind">{role.blind_mode ? "PII hidden during scoring (name, email, phone stripped)" : "Names visible during scoring"}</Label>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Danger Zone */}
         <Card>
           <CardHeader>
@@ -190,20 +204,6 @@ export default function RoleSettingsPage() {
             <Button variant="destructive" onClick={handleDeleteRole} disabled={jdAnalyzing} type="button">
               Delete Role
             </Button>
-          </CardContent>
-        </Card>
-
-        {/* Blind Mode */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Blind Mode</CardTitle>
-            <CardDescription>Hide candidate names during AI scoring to reduce bias</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-3">
-              <Switch checked={role.blind_mode} onCheckedChange={toggleBlindMode} id="blind" />
-              <Label htmlFor="blind">{role.blind_mode ? "Names hidden during scoring" : "Names visible during scoring"}</Label>
-            </div>
           </CardContent>
         </Card>
 

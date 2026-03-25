@@ -20,9 +20,13 @@ app = FastAPI(
 
 settings = get_settings()
 
+_dev = settings.environment == "development"
+_origins = [o.strip() for o in settings.cors_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
+    allow_origins=_origins,
+    allow_origin_regex=r".*" if _dev else None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -41,7 +45,13 @@ async def health_check():
 
 @app.post("/api/seed")
 async def seed_data():
-    """Seed sample data for demo purposes."""
+    """
+    Reset demo data: removes all roles (and resumes/scores/chunks via cascade),
+    then inserts the curated multi-role showcase dataset.
+    """
     from app.seed import seed
     await seed()
-    return {"message": "Sample data seeded successfully"}
+    return {
+        "message": "Demo dataset loaded successfully.",
+        "note": "All previous roles and candidates were replaced.",
+    }

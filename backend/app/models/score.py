@@ -41,7 +41,7 @@ class ResumeChunk(Base):
     section_type = Column(String(50), nullable=True)
     chunk_text = Column(Text, nullable=False)
     chunk_index = Column(SmallInteger, nullable=True)
-    embedding = Column(Vector(768), nullable=True)
+    embedding = Column(Vector(3072), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     resume = relationship("Resume", back_populates="chunks")

@@ -11,7 +11,8 @@ import { JDQualityNotice } from "@/components/roles/JDQualityNotice";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { useState } from "react";
-import { Loader2, BarChart3, Eye, EyeOff } from "lucide-react";
+import { Loader2, BarChart3, Eye, EyeOff, Search, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
 
 export default function RoleDetailPage() {
   const params = useParams();
@@ -29,12 +30,34 @@ export default function RoleDetailPage() {
     isLoading: resumesLoading,
   } = usePolling<any[]>(`/api/roles/${roleId}/resumes`, 3000);
   const [analyzingJD, setAnalyzingJD] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const scoredResumes = resumes?.filter((r: any) => r.status === "scored") || [];
   const processingResumes =
     resumes?.filter((r: any) => ["pending", "processing", "parsing", "extracting", "scoring"].includes(r.status)) || [];
   const duplicateResumes = resumes?.filter((r: any) => r.status === "duplicate") || [];
   const errorResumes = resumes?.filter((r: any) => r.status === "error") || [];
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    setSearching(true);
+    try {
+      const results = await api.searchResumes(roleId, searchQuery.trim());
+      setSearchResults(results);
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setSearchResults(null);
+  };
 
   const handleAnalyzeJD = async () => {
     setAnalyzingJD(true);
@@ -161,8 +184,66 @@ export default function RoleDetailPage() {
           </div>
         )}
 
-        {/* Ranked Candidates */}
+        {/* Semantic Search */}
         {scoredResumes.length > 0 && (
+          <form onSubmit={handleSearch} className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder='Search candidates… e.g. "Python + NLP experience"'
+                className="pl-9 pr-4"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={searching || !searchQuery.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 hover:bg-primary/90 transition-colors"
+            >
+              {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Search
+            </button>
+            {searchResults !== null && (
+              <button type="button" onClick={clearSearch} className="p-2 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </form>
+        )}
+
+        {/* Search Results */}
+        {searchResults !== null && (
+          <div>
+            <h2 className="text-lg font-semibold mb-3">
+              Search Results ({searchResults.length})
+              <span className="text-sm font-normal text-muted-foreground ml-2">for "{searchQuery}"</span>
+            </h2>
+            {searchResults.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No matching candidates found.</p>
+            ) : (
+              <div className="space-y-3">
+                {searchResults.map((resume: any, index: number) => (
+                  <div key={resume.id} className="relative">
+                    <ScoreCard
+                      resume={resume}
+                      rank={index + 1}
+                      roleId={roleId}
+                      blindMode={role.blind_mode}
+                      onDelete={() => { clearSearch(); mutateResumes(); }}
+                    />
+                    <span className="absolute top-3 right-12 text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                      {Math.round(resume.similarity * 100)}% match
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Ranked Candidates */}
+        {searchResults === null && scoredResumes.length > 0 && (
           <div>
             <h2 className="text-lg font-semibold mb-3">
               Ranked Candidates ({scoredResumes.length})

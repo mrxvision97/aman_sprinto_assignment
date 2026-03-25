@@ -1,4 +1,35 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = "";
+
+function formatApiErrorDetail(detail: unknown, status: number): string {
+  if (detail == null) return `API Error: ${status}`;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          const loc = "loc" in item && Array.isArray((item as { loc?: unknown }).loc)
+            ? `${(item as { loc: unknown[] }).loc.join(".")}: `
+            : "";
+          return `${loc}${(item as { msg: string }).msg}`;
+        }
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+  if (typeof detail === "object") {
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return String(detail);
+    }
+  }
+  return String(detail);
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -7,7 +38,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API Error: ${res.status}`);
+    throw new Error(formatApiErrorDetail((error as { detail?: unknown }).detail, res.status));
   }
   return res.json();
 }
@@ -46,12 +77,16 @@ export const api = {
     });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(error.detail || `Upload Error: ${res.status}`);
+      throw new Error(formatApiErrorDetail(error.detail, res.status));
     }
     return res.json();
   },
   deleteResume: (id: string) =>
     request<any>(`/api/resumes/${id}`, { method: "DELETE" }),
+  searchResumes: (roleId: string, q: string) =>
+    request<any[]>(`/api/roles/${roleId}/search?q=${encodeURIComponent(q)}`),
+  findSimilar: (resumeId: string) =>
+    request<any[]>(`/api/resumes/${resumeId}/similar`),
   batchReparse: (roleId: string) =>
     request<any>(`/api/roles/${roleId}/batch-reparse`, { method: "POST" }),
   multiRoleScore: (resumeId: string, roleIds: string[]) =>

@@ -64,7 +64,7 @@ def _make_llm_call(prompt: str, system: str = "") -> str:
 def _make_embed_call(text: str) -> list[float]:
     """Synchronous embedding call."""
     result = genai.embed_content(
-        model="models/text-embedding-004",
+        model="models/gemini-embedding-001",
         content=text,
         task_type="retrieval_document",
     )
