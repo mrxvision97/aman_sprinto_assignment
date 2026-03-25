@@ -21,7 +21,7 @@ FastAPI Backend (Railway)
     ├──► Supabase Storage
     │    └── Raw resume files (PDF, DOCX, images, etc.)
     │
-    └──► Google Gemini API
+    └──► Google Gemini API/any otehr LLM API Keys
          ├── gemini-2.0-flash      (LLM — all structured calls)
          └── gemini-embedding-001  (3072-dim vectors)
 ```
