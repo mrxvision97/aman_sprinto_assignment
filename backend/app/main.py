@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 async def _initialize_database(app: FastAPI):
     try:
-        await init_db()
+        await init_db(retries=10, delay=5.0)
         app.state.db_ready = True
+        logger.info("Database is ready.")
     except Exception:
-        # Keep the API process alive so platform health checks can pass and retries can happen.
-        logger.exception("Database initialization failed during startup")
+        logger.exception("Database initialization failed after all retries — API will return 503 for DB routes")
 
 
 @asynccontextmanager

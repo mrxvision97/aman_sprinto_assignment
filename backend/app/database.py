@@ -1,5 +1,5 @@
-import re
 import socket
+import logging
 from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -7,12 +7,12 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Supabase "direct connection" hostname — AAAA-first DNS breaks on hosts without IPv6 egress (e.g. Railway).
-_SUPABASE_DIRECT_DB_HOST = re.compile(r"^db\.[a-z0-9-]+\.supabase\.co$", re.IGNORECASE)
+# Hosts that never need the IPv4-first DNS patch (local dev).
 _LOCAL_DNS_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "db"})
-_orig_getaddrinfo: type[socket.getaddrinfo] | None = None
+_orig_getaddrinfo = None
 _ipv4_dns_patch_applied = False
 
 
@@ -26,10 +26,16 @@ def _is_local_dns_node(node: object) -> bool:
 
 
 def _maybe_patch_ipv4_first_dns(database_url: str, enabled: bool) -> None:
-    """Prefer A records for Supabase direct DB host so asyncpg/uvloop do not try unreachable IPv6 first."""
+    """Prefer IPv4 (A records) for ALL remote hosts so asyncpg/uvloop do not try unreachable IPv6 first.
+
+    Railway and many container platforms have IPv4-only egress. When DNS returns
+    AAAA records first, asyncpg immediately fails with 'Network is unreachable'.
+    """
     global _orig_getaddrinfo, _ipv4_dns_patch_applied
     if _ipv4_dns_patch_applied or not enabled:
         return
+
+    # Only patch if the DB host is remote (not localhost/docker).
     raw = database_url
     for prefix in (
         "postgresql+asyncpg://",
@@ -44,13 +50,12 @@ def _maybe_patch_ipv4_first_dns(database_url: str, enabled: bool) -> None:
         host = (urlparse(raw).hostname or "").lower()
     except Exception:
         return
-    if not host or not _SUPABASE_DIRECT_DB_HOST.match(host):
+    if not host or _is_local_dns_node(host):
         return
 
     _orig_getaddrinfo = socket.getaddrinfo
 
     def getaddrinfo_ipv4_first(node, port, family=0, type=0, proto=0, flags=0):
-        assert _orig_getaddrinfo is not None
         if family == 0 and not _is_local_dns_node(node):
             try:
                 return _orig_getaddrinfo(node, port, socket.AF_INET, type, proto, flags)
@@ -60,6 +65,7 @@ def _maybe_patch_ipv4_first_dns(database_url: str, enabled: bool) -> None:
 
     socket.getaddrinfo = getaddrinfo_ipv4_first  # type: ignore[method-assign, assignment]
     _ipv4_dns_patch_applied = True
+    logger.info("IPv4-first DNS patch applied for remote database host: %s", host)
 
 
 _maybe_patch_ipv4_first_dns(settings.database_url, settings.database_ipv4_first)
@@ -92,6 +98,10 @@ engine = create_async_engine(
     settings.database_url,
     echo=False,
     connect_args=_asyncpg_connect_args(settings.database_url, settings.database_ssl),
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=5,
+    max_overflow=10,
 )
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -101,18 +111,33 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
-    async with async_session() as session:
+    try:
+        async with async_session() as session:
+            try:
+                yield session
+            finally:
+                await session.close()
+    except OSError as exc:
+        from fastapi import HTTPException
+        logger.error("Database connection failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Database is temporarily unavailable. Please retry shortly.")
+
+
+async def init_db(retries: int = 5, delay: float = 3.0):
+    import asyncio
+    for attempt in range(1, retries + 1):
         try:
-            yield session
-        finally:
-            await session.close()
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
 
-
-async def init_db():
-    async with engine.begin() as conn:
-        # Enable pgvector extension
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
-
-        from app.models import role, resume, score  # noqa: F401
-        await conn.run_sync(Base.metadata.create_all)
+                from app.models import role, resume, score  # noqa: F401
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database initialized successfully on attempt %d", attempt)
+            return
+        except Exception as exc:
+            logger.warning("Database init attempt %d/%d failed: %s", attempt, retries, exc)
+            if attempt < retries:
+                await asyncio.sleep(delay)
+            else:
+                raise
