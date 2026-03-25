@@ -38,7 +38,12 @@ class Settings(BaseSettings):
     @field_validator("database_url", mode="before")
     @classmethod
     def _normalize_database_url(cls, v: object) -> object:
-        return _ensure_asyncpg_database_url(v) if isinstance(v, str) else v
+        # Empty env (e.g. broken Railway variable reference) would crash SQLAlchemy on import.
+        if v is None or (isinstance(v, str) and not v.strip()):
+            v = "postgresql+asyncpg://postgres:postgres@localhost:5432/sprinto"
+        elif isinstance(v, str):
+            v = _ensure_asyncpg_database_url(v.strip())
+        return v
 
 
 @lru_cache(maxsize=None)
