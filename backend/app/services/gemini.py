@@ -12,13 +12,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# Initialize Gemini
-genai.configure(api_key=settings.gemini_api_key)
+# Defer configuration until a key exists (deploys can boot without GEMINI_API_KEY set yet).
+if settings.gemini_api_key:
+    genai.configure(api_key=settings.gemini_api_key)
 
 # Rate limiter: max 1 concurrent call, 4 sec between calls (stays under 15 RPM)
 _semaphore = asyncio.Semaphore(1)
 _last_call_time = 0.0
 MIN_CALL_INTERVAL = 4.0  # seconds
+
+
+def _ensure_gemini_configured() -> None:
+    key = get_settings().gemini_api_key
+    if not key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    genai.configure(api_key=key)
 
 
 async def _rate_limited_call(fn, *args, **kwargs):
@@ -73,12 +81,14 @@ def _make_embed_call(text: str) -> list[float]:
 
 async def call_llm(prompt: str, system: str = "") -> dict:
     """Async LLM call returning parsed JSON dict."""
+    _ensure_gemini_configured()
     raw = await _rate_limited_call(_make_llm_call, prompt, system)
     return _parse_json(raw)
 
 
 async def embed_text(text: str) -> list[float]:
     """Async embedding call returning 768-dim vector."""
+    _ensure_gemini_configured()
     return await _rate_limited_call(_make_embed_call, text)
 
 

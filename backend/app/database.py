@@ -14,7 +14,8 @@ def _asyncpg_connect_args(database_url: str, ssl_mode: str) -> dict:
     if mode in ("0", "false", "disable", "off"):
         return {}
     if mode in ("1", "true", "require", "on"):
-        return {"ssl": "require"}
+        # asyncpg + managed Postgres (Supabase/Railway) are most reliable with boolean SSL
+        return {"ssl": True}
     raw = database_url
     for prefix in ("postgresql+asyncpg://", "postgres+asyncpg://"):
         if raw.startswith(prefix):
@@ -27,7 +28,7 @@ def _asyncpg_connect_args(database_url: str, ssl_mode: str) -> dict:
     # Typical local/dev Postgres (bare metal, Docker Compose service names).
     if host in ("localhost", "127.0.0.1", "::1", "postgres", "db") or host.endswith(".local"):
         return {}
-    return {"ssl": "require"}
+    return {"ssl": True}
 
 
 engine = create_async_engine(

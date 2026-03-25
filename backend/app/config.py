@@ -1,6 +1,7 @@
-from pydantic import field_validator
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _ensure_asyncpg_database_url(url: str) -> str:
@@ -17,6 +18,13 @@ def _ensure_asyncpg_database_url(url: str) -> str:
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sprinto"
     # auto: no SSL for localhost; require SSL for remote hosts (e.g. Railway). Override with require/disable.
     database_ssl: str = "auto"
@@ -26,9 +34,6 @@ class Settings(BaseSettings):
     unstructured_api_key: str = ""
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     environment: str = "development"
-
-    class Config:
-        env_file = ".env"
 
     @field_validator("database_url", mode="before")
     @classmethod
