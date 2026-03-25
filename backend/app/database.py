@@ -135,7 +135,7 @@ def _asyncpg_connect_args(database_url: str, ssl_mode: str) -> dict:
 
     # Pooler connections (PgBouncer/Supavisor) do not support prepared statements
     if _is_pooler_connection(database_url):
-        args["prepared_statement_cache_size"] = 0
+        args["statement_cache_size"] = 0
         logger.info("Pooler connection detected — disabled prepared statement cache")
 
     return args
